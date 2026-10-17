@@ -1,10 +1,31 @@
 # Clicker
 
-![Clicker window](docs/clicker.png)
-
-A small Windows auto-clicker. The idea comes from Boris Mezhibovskiy's clicker: pick how fast to click, pick a trigger key, and optionally stop after a set number of clicks. This program keeps that shape and changes how timing, input, and targeting work.
+A small Windows auto-clicker. The idea comes from [Boris Mezhibovskiy](#what-changed-from-boriss-program)'s clicker: pick how fast to click, pick a trigger key, and optionally stop after a set number of clicks. This program keeps that shape and changes how timing, input, and targeting work.
 
 Use it on your own machine, at your own risk.
+
+<p align="center">
+  <img src="docs/clicker.png" alt="Clicker window" width="220">
+</p>
+
+## Download
+
+64-bit Windows builds are on the [releases](https://github.com/lecrackzor/clicker/releases) page. Versions before 1.0 are test builds.
+
+## Usage
+
+Run `clicker.exe`. The gap between clicks is hours, minutes, seconds, and milliseconds. `0` in **stop after** means keep going until you stop it.
+
+| Control | Default |
+| --- | --- |
+| Trigger | F6, toggle |
+| Panic | F12 |
+| Button | Left |
+| Hold | 20 ms |
+
+Press the trigger to start. Press it again, click **Stop**, or hit the panic key to stop. The trigger still works while the window is minimized. Close the program to give the keys back.
+
+**Choose spot** records a fixed screen position. **Choose window** limits clicks to that window. Settings are saved in `%LOCALAPPDATA%\Clicker\settings.ini`.
 
 ## What changed from Boris's program
 
