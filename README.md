@@ -1,5 +1,7 @@
 # Clicker
 
+![Clicker window](docs/clicker.png)
+
 A small Windows auto-clicker. The idea comes from Boris Mezhibovskiy's clicker: pick how fast to click, pick a trigger key, and optionally stop after a set number of clicks. This program keeps that shape and changes how timing, input, and targeting work.
 
 Use it on your own machine, at your own risk.
