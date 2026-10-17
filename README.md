@@ -8,25 +8,6 @@ Use it on your own machine, at your own risk.
   <img src="docs/clicker.png" alt="Clicker window" width="220">
 </p>
 
-## Download
-
-64-bit Windows builds are on the [releases](https://github.com/lecrackzor/clicker/releases) page. Versions before 1.0 are test builds.
-
-## Usage
-
-Run `clicker.exe`. The gap between clicks is hours, minutes, seconds, and milliseconds. `0` in **stop after** means keep going until you stop it.
-
-| Control | Default |
-| --- | --- |
-| Trigger | F6, toggle |
-| Panic | F12 |
-| Button | Left |
-| Hold | 20 ms |
-
-Press the trigger to start. Press it again, click **Stop**, or hit the panic key to stop. The trigger still works while the window is minimized. Close the program to give the keys back.
-
-**Choose spot** records a fixed screen position. **Choose window** limits clicks to that window. Settings are saved in `%LOCALAPPDATA%\Clicker\settings.ini`.
-
 ## What changed from Boris's program
 
 Boris's clicker took a click count, a frequency in clicks per second (fractions allowed, up to 9999), and one trigger key that defaulted to Enter. A last field stopped the run after N clicks, with 0 meaning forever. The trigger kept working while the window was minimized, and closing the program was how you gave the key back.
