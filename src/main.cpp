@@ -44,6 +44,7 @@ constexpr int ID_HOT_PRESS = 138;
 constexpr int ID_HOT_TOGGLE = 139;
 
 constexpr UINT WM_CLICKER_STATUS = WM_APP + 1;
+constexpr UINT WM_CLICKER_FOCUS = WM_APP + 2;
 constexpr UINT_PTR kPickTimer = 1;
 constexpr UINT_PTR kCaptureTimer = 2;
 constexpr UINT_PTR kLockTimer = 3;
@@ -115,6 +116,7 @@ HWND g_status = nullptr;
 HFONT g_font = nullptr;
 bool g_loading = false;
 CaptureTarget g_capture = CaptureTarget::None;
+int g_latchedVk = 0;
 bool g_captureDown[256] = {};
 bool g_pickActive = false;
 bool g_pickWaitRelease = false;
@@ -589,15 +591,87 @@ void ShowStatus(const StatusMsg& msg) {
 
 void EndCapture(HWND hwnd) {
     g_capture = CaptureTarget::None;
+    g_latchedVk = 0;
     g_suspendHotkeys.store(false);
     KillTimer(hwnd, kCaptureTimer);
     UpdateKeyLabel();
     UpdateHotkeyButtons();
 }
 
+bool CaptureWants(int vk) {
+    if (vk < VK_XBUTTON1 || vk > 255) {
+        return false;
+    }
+    if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU) {
+        return false;
+    }
+    if (g_capture != CaptureTarget::Action && (vk == VK_XBUTTON1 || vk == VK_XBUTTON2)) {
+        return false;
+    }
+    return true;
+}
+
+void ShowLatchedKey(int vk) {
+    wchar_t name[64];
+    KeyName(static_cast<WORD>(vk), name, 64);
+    HWND button = g_setKey;
+    if (g_capture == CaptureTarget::Hotkey) {
+        button = g_hotkeyBtn;
+    } else if (g_capture == CaptureTarget::Panic) {
+        button = g_panicBtn;
+    }
+    SetWindowTextW(button, name);
+}
+
+// Remember the key on the way down. Saving it while it is still held makes a
+// focused button treat the release as another click, which restarts capture.
+void LatchCapture(HWND hwnd, int vk) {
+    if (g_capture == CaptureTarget::None) {
+        return;
+    }
+    if (vk == VK_ESCAPE) {
+        EndCapture(hwnd);
+        return;
+    }
+    if (g_latchedVk != 0 || !CaptureWants(vk)) {
+        return;
+    }
+    g_latchedVk = vk;
+    ShowLatchedKey(vk);
+}
+
+void AcceptCapture(HWND hwnd, int vk) {
+    if (g_capture == CaptureTarget::None || !CaptureWants(vk)) {
+        return;
+    }
+    if (vk == VK_ESCAPE) {
+        EndCapture(hwnd);
+        return;
+    }
+    WORD key = static_cast<WORD>(vk);
+    if (g_capture == CaptureTarget::Action) {
+        g_cfg.actionVk = key;
+        g_loading = true;
+        SendMessageW(g_keyMode, BM_SETCHECK, BST_CHECKED, 0);
+        SendMessageW(g_btnLeft, BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessageW(g_btnMiddle, BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessageW(g_btnRight, BM_SETCHECK, BST_UNCHECKED, 0);
+        g_loading = false;
+    } else if (g_capture == CaptureTarget::Hotkey) {
+        g_cfg.hotkeyVk = key;
+    } else if (g_capture == CaptureTarget::Panic) {
+        g_cfg.panicVk = key;
+    }
+    EndCapture(hwnd);
+    CommitFromUi();
+}
+
 void BeginCapture(HWND hwnd, CaptureTarget target) {
     g_capture = target;
+    g_latchedVk = 0;
     g_suspendHotkeys.store(true);
+    // The button click that opened capture sets focus back after we return.
+    PostMessageW(hwnd, WM_CLICKER_FOCUS, 0, 0);
     for (int vk = 0; vk < 256; ++vk) {
         g_captureDown[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
@@ -615,45 +689,28 @@ void PollCapture(HWND hwnd) {
     if (g_capture == CaptureTarget::None) {
         return;
     }
-    int firstVk = VK_XBUTTON2 + 1;
-    if (g_capture == CaptureTarget::Action) {
-        firstVk = VK_XBUTTON1;
+    if (g_latchedVk != 0) {
+        bool held = (GetAsyncKeyState(g_latchedVk) & 0x8000) != 0;
+        if (!held) {
+            AcceptCapture(hwnd, g_latchedVk);
+        }
+        return;
     }
-    for (int vk = firstVk; vk < 256; ++vk) {
-        if (vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_CANCEL) {
-            continue;
-        }
-        if (g_capture != CaptureTarget::Action && (vk == VK_XBUTTON1 || vk == VK_XBUTTON2)) {
-            continue;
-        }
-        if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU) {
+    for (int vk = VK_XBUTTON1; vk < 256; ++vk) {
+        if (!CaptureWants(vk)) {
             continue;
         }
         bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
-        if (!down || g_captureDown[vk]) {
+        if (g_captureDown[vk]) {
+            if (!down) {
+                g_captureDown[vk] = false;
+            }
             continue;
         }
-        if (vk == VK_ESCAPE) {
-            EndCapture(hwnd);
+        if (down) {
+            LatchCapture(hwnd, vk);
             return;
         }
-        WORD key = static_cast<WORD>(vk);
-        if (g_capture == CaptureTarget::Action) {
-            g_cfg.actionVk = key;
-            g_loading = true;
-            SendMessageW(g_keyMode, BM_SETCHECK, BST_CHECKED, 0);
-            SendMessageW(g_btnLeft, BM_SETCHECK, BST_UNCHECKED, 0);
-            SendMessageW(g_btnMiddle, BM_SETCHECK, BST_UNCHECKED, 0);
-            SendMessageW(g_btnRight, BM_SETCHECK, BST_UNCHECKED, 0);
-            g_loading = false;
-        } else if (g_capture == CaptureTarget::Hotkey) {
-            g_cfg.hotkeyVk = key;
-        } else if (g_capture == CaptureTarget::Panic) {
-            g_cfg.panicVk = key;
-        }
-        EndCapture(hwnd);
-        CommitFromUi();
-        return;
     }
 }
 
@@ -727,6 +784,54 @@ void PollLock(HWND hwnd) {
 
 BOOL CALLBACK SetChildFont(HWND child, LPARAM font) {
     SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(font), TRUE);
+    return TRUE;
+}
+
+WNDPROC g_buttonProc = nullptr;
+WNDPROC g_editProc = nullptr;
+
+bool IsInjectedKey() {
+    return GetMessageExtraInfo() == static_cast<LPARAM>(kInjectedExtra);
+}
+
+LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (IsInjectedKey() && (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR ||
+                            msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP)) {
+        return 0;
+    }
+    // Space on a focused button is a click. While choosing a key, keep that
+    // press for the chooser and wait until it is released.
+    if (g_capture != CaptureTarget::None &&
+        (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP)) {
+        return SendMessageW(GetParent(hwnd), msg, wParam, lParam);
+    }
+    return CallWindowProcW(g_buttonProc, hwnd, msg, wParam, lParam);
+}
+
+LRESULT CALLBACK EditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (IsInjectedKey() && (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR ||
+                            msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP)) {
+        return 0;
+    }
+    return CallWindowProcW(g_editProc, hwnd, msg, wParam, lParam);
+}
+
+BOOL CALLBACK SubclassInputChild(HWND child, LPARAM) {
+    wchar_t cls[16];
+    if (GetClassNameW(child, cls, 16) == 0) {
+        return TRUE;
+    }
+    if (wcscmp(cls, L"Button") == 0) {
+        if (!g_buttonProc) {
+            g_buttonProc = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(child, GWLP_WNDPROC));
+        }
+        SetWindowLongPtrW(child, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ButtonProc));
+    } else if (wcscmp(cls, L"Edit") == 0) {
+        if (!g_editProc) {
+            g_editProc = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(child, GWLP_WNDPROC));
+        }
+        SetWindowLongPtrW(child, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(EditProc));
+    }
     return TRUE;
 }
 
@@ -805,6 +910,7 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
                                  28, 572, 156, 20, hwnd, MenuId(ID_LOCK_PICK), inst, nullptr);
 
     g_warn = MakeLabel(hwnd, inst, L"", 8, 606, 188, 28, ID_WARN);
+    EnumChildWindows(hwnd, SubclassInputChild, 0);
 }
 
 void OnStart() {
@@ -817,6 +923,10 @@ void OnStart() {
         SetWindowTextW(g_status, L"Choose a window to lock");
         return;
     }
+    if (HWND owner = g_hwnd.load()) {
+        SetFocus(owner);
+    }
+    SetRunningUi(true);
     g_uiStop.store(false);
     g_uiStart.store(true);
 }
@@ -835,9 +945,47 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_worker = std::thread(WorkerMain);
         return 0;
     }
+    case WM_KEYDOWN:
+        if (g_capture != CaptureTarget::None) {
+            if ((lParam & (1 << 30)) == 0) {
+                LatchCapture(hwnd, static_cast<int>(wParam));
+            }
+            return 0;
+        }
+        break;
+    case WM_KEYUP:
+        if (g_capture != CaptureTarget::None && static_cast<int>(wParam) == g_latchedVk) {
+            AcceptCapture(hwnd, g_latchedVk);
+            return 0;
+        }
+        break;
+    case WM_XBUTTONDOWN:
+        if (g_capture == CaptureTarget::Action) {
+            int vk = HIWORD(wParam) == XBUTTON2 ? VK_XBUTTON2 : VK_XBUTTON1;
+            LatchCapture(hwnd, vk);
+            return TRUE;
+        }
+        break;
+    case WM_XBUTTONUP:
+        if (g_capture == CaptureTarget::Action) {
+            int vk = HIWORD(wParam) == XBUTTON2 ? VK_XBUTTON2 : VK_XBUTTON1;
+            if (vk == g_latchedVk) {
+                AcceptCapture(hwnd, vk);
+            }
+            return TRUE;
+        }
+        break;
+    case WM_CLICKER_FOCUS:
+        if (g_capture != CaptureTarget::None) {
+            SetFocus(hwnd);
+        }
+        return 0;
     case WM_COMMAND: {
         int id = LOWORD(wParam);
         int code = HIWORD(wParam);
+        if (code == BN_CLICKED && IsInjectedKey()) {
+            return 0;
+        }
         if (id == ID_START && code == BN_CLICKED) {
             OnStart();
             return 0;
@@ -847,15 +995,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (id == ID_SET_KEY && code == BN_CLICKED) {
-            BeginCapture(hwnd, CaptureTarget::Action);
+            if (g_capture != CaptureTarget::Action) {
+                BeginCapture(hwnd, CaptureTarget::Action);
+            }
             return 0;
         }
         if (id == ID_HOTKEY && code == BN_CLICKED) {
-            BeginCapture(hwnd, CaptureTarget::Hotkey);
+            if (g_capture != CaptureTarget::Hotkey) {
+                BeginCapture(hwnd, CaptureTarget::Hotkey);
+            }
             return 0;
         }
         if (id == ID_PANIC && code == BN_CLICKED) {
-            BeginCapture(hwnd, CaptureTarget::Panic);
+            if (g_capture != CaptureTarget::Panic) {
+                BeginCapture(hwnd, CaptureTarget::Panic);
+            }
             return 0;
         }
         if (id == ID_PICK && code == BN_CLICKED) {

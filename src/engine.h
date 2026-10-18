@@ -64,6 +64,9 @@ RunStats RunSession(const Config& cfg, const RunControl& ctl);
 // Writes a timestamp log. Returns 0 when pairing and interval error are within tolerance.
 int RunSelfTest(const wchar_t* logPath);
 
+// Mark on keyboard input this program injects, so its own buttons can ignore it.
+constexpr ULONG_PTR kInjectedExtra = 0x434C4B31;
+
 const wchar_t* MouseButtonName(int button);
 // Caller provides a buffer of at least 64 wchars.
 void KeyName(WORD vk, wchar_t* out, int outChars);

@@ -126,6 +126,7 @@ void SendKey(WORD vk, bool down) {
     INPUT in{};
     in.type = INPUT_KEYBOARD;
     WORD scan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
+    in.ki.dwExtraInfo = kInjectedExtra;
     if (scan == 0) {
         in.ki.wVk = vk;
         in.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
