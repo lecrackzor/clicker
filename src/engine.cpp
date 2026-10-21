@@ -276,7 +276,7 @@ void SplitInterval(int64_t intervalMs, int& hours, int& minutes, int& seconds, i
 
 int64_t EffectivePeriodMs(const Config& cfg) {
     int64_t hold = cfg.holdMs < 1 ? 1 : cfg.holdMs;
-    if (cfg.clickType == ClickType::Hold) {
+    if (cfg.clickType == ClickType::Hold || cfg.clickType == ClickType::TimedHold) {
         return hold;
     }
     int clicks = ClicksPerBurst(cfg);
@@ -372,14 +372,18 @@ RunStats RunSession(const Config& cfg, const RunControl& ctl) {
         return finish(early);
     }
 
-    const bool holding = cfg.clickType == ClickType::Hold;
+    const bool timedHold = cfg.clickType == ClickType::TimedHold;
+    const bool holding = cfg.clickType == ClickType::Hold || timedHold;
     if (ctl.onStatus) {
         ctl.onStatus(ctl.ctx, 0, 0, holding);
     }
 
     if (holding) {
         bool down = false;
+        bool started = false;
+        int64_t holdDeadline = 0;
         int64_t lastStatus = QpcNow();
+        const int64_t timedMs = cfg.timedHoldMs < 1 ? 1 : cfg.timedHoldMs;
         while (true) {
             StopReason why = stopped();
             if (why != StopReason::Done) {
@@ -389,11 +393,22 @@ RunStats RunSession(const Config& cfg, const RunControl& ctl) {
                 }
                 return finish(why);
             }
+            if (timedHold && started && QpcNow() >= holdDeadline) {
+                if (down) {
+                    Inject(cfg, false, ctl.inject, ctl);
+                    stats.clicks = 1;
+                }
+                return finish(StopReason::Done);
+            }
             bool allowed = InputAllowed(cfg);
             if (allowed && !down) {
                 Inject(cfg, true, ctl.inject, ctl);
                 down = true;
                 stats.clicks = 1;
+                if (timedHold && !started) {
+                    started = true;
+                    holdDeadline = QpcNow() + (timedMs * g_freq) / 1000;
+                }
             } else if (!allowed && down) {
                 Inject(cfg, false, ctl.inject, ctl);
                 down = false;

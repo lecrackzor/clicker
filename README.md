@@ -15,8 +15,8 @@ Boris's clicker took a click count, a frequency in clicks per second (fractions 
 This version changes the following.
 
 - **Interval instead of a rate.** The gap between clicks is hours, minutes, seconds, and milliseconds. One click every two seconds is `00:00:02:000`, which is what `0.5` clicks per second meant before.
-- **The button is held for a set time.** Each press stays down for the hold time (20 ms by default), then releases. If the interval is shorter than that click, the interval is lengthened and the window says so, so the next press does not land while the button is still down.
-- **Single, double, or hold.** Hold keeps the button down until you stop, instead of repeating clicks.
+- **The button is held for a set time.** Each single or double click stays down for 20 ms, then releases. If the interval is shorter than that click, the interval is lengthened and the window says so, so the next press does not land while the button is still down.
+- **Single, double, or hold.** Until stop keeps the button down until you stop. For stays down for the hours, minutes, seconds, and milliseconds under it, then lets go.
 - **Mouse or keyboard.** Left, middle, or right button, or a key (Space by default). Mouse 4 and mouse 5 count as keys. Keyboard actions are sent as scan codes.
 - **Trigger and panic are separate keys.** The trigger defaults to F6 and can toggle, or run only while held. Panic defaults to F12 and always stops. Either key can be changed without restarting, including when the click button is the left mouse button.
 - **The trigger is not a mouse button.** The click button and the trigger cannot be the same physical button. If the action key matches the trigger or the panic key, the run will not start.

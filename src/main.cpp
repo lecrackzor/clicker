@@ -20,7 +20,10 @@ constexpr int ID_HH = 107;
 constexpr int ID_MM = 108;
 constexpr int ID_SS = 109;
 constexpr int ID_MS = 110;
-constexpr int ID_HOLD = 111;
+constexpr int ID_HOLD_HH = 141;
+constexpr int ID_HOLD_MM = 142;
+constexpr int ID_HOLD_SS = 143;
+constexpr int ID_HOLD_MS = 144;
 constexpr int ID_WARN = 112;
 constexpr int ID_HOTMODE = 113;
 constexpr int ID_HOTKEY = 114;
@@ -40,6 +43,7 @@ constexpr int ID_BTN_RIGHT = 132;
 constexpr int ID_TYPE_SINGLE = 135;
 constexpr int ID_TYPE_DOUBLE = 136;
 constexpr int ID_TYPE_HOLD = 137;
+constexpr int ID_TYPE_TIMED = 140;
 constexpr int ID_HOT_PRESS = 138;
 constexpr int ID_HOT_TOGGLE = 139;
 
@@ -95,12 +99,16 @@ HWND g_setKey = nullptr;
 HWND g_typeSingle = nullptr;
 HWND g_typeDouble = nullptr;
 HWND g_typeHold = nullptr;
+HWND g_typeTimed = nullptr;
+HWND g_holdHh = nullptr;
+HWND g_holdMm = nullptr;
+HWND g_holdSs = nullptr;
+HWND g_holdMs = nullptr;
 HWND g_repeatN = nullptr;
 HWND g_hh = nullptr;
 HWND g_mm = nullptr;
 HWND g_ss = nullptr;
 HWND g_ms = nullptr;
-HWND g_hold = nullptr;
 HWND g_warn = nullptr;
 HWND g_hotPress = nullptr;
 HWND g_hotToggle = nullptr;
@@ -304,6 +312,8 @@ Config ReadUi() {
         cfg.clickType = ClickType::Double;
     } else if (SendMessageW(g_typeHold, BM_GETCHECK, 0, 0) == BST_CHECKED) {
         cfg.clickType = ClickType::Hold;
+    } else if (SendMessageW(g_typeTimed, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        cfg.clickType = ClickType::TimedHold;
     } else {
         cfg.clickType = ClickType::Single;
     }
@@ -320,7 +330,11 @@ Config ReadUi() {
     int seconds = ReadEdit(g_ss, 0, 0, 999);
     int millis = ReadEdit(g_ms, 0, 0, 999);
     cfg.intervalMs = IntervalMsFromParts(hours, minutes, seconds, millis);
-    cfg.holdMs = ReadEdit(g_hold, 20, 1, 10000);
+    cfg.timedHoldMs = IntervalMsFromParts(ReadEdit(g_holdHh, 0, 0, 999), ReadEdit(g_holdMm, 0, 0, 999),
+                                          ReadEdit(g_holdSs, 0, 0, 999), ReadEdit(g_holdMs, 0, 0, 999));
+    if (cfg.timedHoldMs < 1) {
+        cfg.timedHoldMs = 1;
+    }
     cfg.hotkeyMode = SendMessageW(g_hotPress, BM_GETCHECK, 0, 0) == BST_CHECKED
                          ? HotkeyMode::Hold
                          : HotkeyMode::Toggle;
@@ -330,7 +344,7 @@ Config ReadUi() {
 }
 
 void UpdateWarning(const Config& cfg) {
-    if (cfg.clickType == ClickType::Hold) {
+    if (cfg.clickType == ClickType::Hold || cfg.clickType == ClickType::TimedHold) {
         SetWindowTextW(g_warn, L"");
         return;
     }
@@ -398,6 +412,7 @@ void ApplyUi(const Config& cfg) {
     SendMessageW(g_typeSingle, BM_SETCHECK, cfg.clickType == ClickType::Single ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(g_typeDouble, BM_SETCHECK, cfg.clickType == ClickType::Double ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(g_typeHold, BM_SETCHECK, cfg.clickType == ClickType::Hold ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(g_typeTimed, BM_SETCHECK, cfg.clickType == ClickType::TimedHold ? BST_CHECKED : BST_UNCHECKED, 0);
     SetEditInt(g_repeatN, cfg.repeatMode == RepeatMode::Count ? cfg.repeatCount : 0);
     int hours = 0, minutes = 0, seconds = 0, millis = 0;
     SplitInterval(cfg.intervalMs, hours, minutes, seconds, millis);
@@ -405,7 +420,12 @@ void ApplyUi(const Config& cfg) {
     SetEditInt(g_mm, minutes);
     SetEditInt(g_ss, seconds);
     SetEditInt(g_ms, millis);
-    SetEditInt(g_hold, cfg.holdMs);
+    int holdHours = 0, holdMinutes = 0, holdSeconds = 0, holdMillis = 0;
+    SplitInterval(cfg.timedHoldMs, holdHours, holdMinutes, holdSeconds, holdMillis);
+    SetEditInt(g_holdHh, holdHours);
+    SetEditInt(g_holdMm, holdMinutes);
+    SetEditInt(g_holdSs, holdSeconds);
+    SetEditInt(g_holdMs, holdMillis);
     SendMessageW(g_hotPress, BM_SETCHECK, cfg.hotkeyMode == HotkeyMode::Hold ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(g_hotToggle, BM_SETCHECK, cfg.hotkeyMode == HotkeyMode::Toggle ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(g_fixed, BM_SETCHECK, cfg.fixedPos ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -424,13 +444,27 @@ void SaveIni(const Config& cfg) {
     SplitInterval(cfg.intervalMs, hours, minutes, seconds, millis);
     WriteInt(L"action", cfg.action == ActionKind::Key ? 5 : cfg.mouseButton);
     WriteInt(L"action_vk", cfg.actionVk);
-    WriteInt(L"click_type", cfg.clickType == ClickType::Double ? 1 : cfg.clickType == ClickType::Hold ? 2 : 0);
+    int clickType = 0;
+    if (cfg.clickType == ClickType::Double) {
+        clickType = 1;
+    } else if (cfg.clickType == ClickType::Hold) {
+        clickType = 2;
+    } else if (cfg.clickType == ClickType::TimedHold) {
+        clickType = 3;
+    }
+    WriteInt(L"click_type", clickType);
     WriteInt(L"repeat_mode", cfg.repeatMode == RepeatMode::Count ? 1 : 0);
     WriteInt(L"repeat_count", cfg.repeatCount);
     WriteInt(L"hours", hours);
     WriteInt(L"minutes", minutes);
     WriteInt(L"seconds", seconds);
     WriteInt(L"millis", millis);
+    int holdHours = 0, holdMinutes = 0, holdSeconds = 0, holdMillis = 0;
+    SplitInterval(cfg.timedHoldMs, holdHours, holdMinutes, holdSeconds, holdMillis);
+    WriteInt(L"hold_for_hours", holdHours);
+    WriteInt(L"hold_for_minutes", holdMinutes);
+    WriteInt(L"hold_for_seconds", holdSeconds);
+    WriteInt(L"hold_for_millis", holdMillis);
     WriteInt(L"hold_ms", cfg.holdMs);
     WriteInt(L"hotkey_mode", cfg.hotkeyMode == HotkeyMode::Hold ? 1 : 0);
     WriteInt(L"hotkey_vk", cfg.hotkeyVk);
@@ -489,6 +523,7 @@ void LoadIni() {
     int type = GetPrivateProfileIntW(L"clicker", L"click_type", 0, g_ini.c_str());
     if (type == 1) cfg.clickType = ClickType::Double;
     else if (type == 2) cfg.clickType = ClickType::Hold;
+    else if (type == 3) cfg.clickType = ClickType::TimedHold;
     else cfg.clickType = ClickType::Single;
     cfg.repeatMode = GetPrivateProfileIntW(L"clicker", L"repeat_mode", 0, g_ini.c_str()) == 1
                          ? RepeatMode::Count
@@ -502,6 +537,18 @@ void LoadIni() {
     cfg.intervalMs = IntervalMsFromParts(hours, minutes, seconds, millis);
     cfg.holdMs = GetPrivateProfileIntW(L"clicker", L"hold_ms", 20, g_ini.c_str());
     if (cfg.holdMs < 1) cfg.holdMs = 1;
+    wchar_t holdProbe[8] = {};
+    DWORD holdProbeLen = GetPrivateProfileStringW(L"clicker", L"hold_for_millis", L"", holdProbe, 8, g_ini.c_str());
+    if (holdProbeLen == 0) {
+        cfg.timedHoldMs = 1000;
+    } else {
+        int holdHours = GetPrivateProfileIntW(L"clicker", L"hold_for_hours", 0, g_ini.c_str());
+        int holdMinutes = GetPrivateProfileIntW(L"clicker", L"hold_for_minutes", 0, g_ini.c_str());
+        int holdSeconds = GetPrivateProfileIntW(L"clicker", L"hold_for_seconds", 0, g_ini.c_str());
+        int holdMillis = GetPrivateProfileIntW(L"clicker", L"hold_for_millis", 0, g_ini.c_str());
+        cfg.timedHoldMs = IntervalMsFromParts(holdHours, holdMinutes, holdSeconds, holdMillis);
+        if (cfg.timedHoldMs < 1) cfg.timedHoldMs = 1;
+    }
     cfg.hotkeyMode = GetPrivateProfileIntW(L"clicker", L"hotkey_mode", 0, g_ini.c_str()) == 1
                          ? HotkeyMode::Hold
                          : HotkeyMode::Toggle;
@@ -546,12 +593,16 @@ void SetRunningUi(bool running) {
     EnableWindow(g_typeSingle, edit);
     EnableWindow(g_typeDouble, edit);
     EnableWindow(g_typeHold, edit);
+    EnableWindow(g_typeTimed, edit);
+    EnableWindow(g_holdHh, edit);
+    EnableWindow(g_holdMm, edit);
+    EnableWindow(g_holdSs, edit);
+    EnableWindow(g_holdMs, edit);
     EnableWindow(g_repeatN, edit);
     EnableWindow(g_hh, edit);
     EnableWindow(g_mm, edit);
     EnableWindow(g_ss, edit);
     EnableWindow(g_ms, edit);
-    EnableWindow(g_hold, edit);
     EnableWindow(g_hotPress, edit);
     EnableWindow(g_hotToggle, edit);
     EnableWindow(g_hotkeyBtn, edit);
@@ -890,26 +941,32 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
     g_setKey = CreateWindowExW(0, L"BUTTON", L"Space", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                32, 370, 150, 20, hwnd, MenuId(ID_SET_KEY), inst, nullptr);
 
-    MakeGroup(hwnd, inst, L"click", 6, 406, 192, 74);
+    MakeGroup(hwnd, inst, L"click", 6, 406, 192, 128);
     g_typeSingle = MakeRadio(hwnd, inst, L"single", 18, 424, 168, ID_TYPE_SINGLE, true);
     g_typeDouble = MakeRadio(hwnd, inst, L"double", 18, 442, 168, ID_TYPE_DOUBLE, false);
-    g_typeHold = MakeRadio(hwnd, inst, L"hold", 18, 460, 52, ID_TYPE_HOLD, false);
-    g_hold = MakeEdit(hwnd, inst, 74, 458, 40, ID_HOLD);
-    MakeLabel(hwnd, inst, L"ms", 118, 460, 24, 16);
+    g_typeHold = MakeRadio(hwnd, inst, L"until stop", 18, 460, 168, ID_TYPE_HOLD, false);
+    g_typeTimed = MakeRadio(hwnd, inst, L"for", 18, 478, 168, ID_TYPE_TIMED, false);
+    g_holdHh = MakeEdit(hwnd, inst, 18, 498, 32, ID_HOLD_HH);
+    MakeLabel(hwnd, inst, L":", 52, 500, 8, 16);
+    g_holdMm = MakeEdit(hwnd, inst, 60, 498, 32, ID_HOLD_MM);
+    MakeLabel(hwnd, inst, L":", 94, 500, 8, 16);
+    g_holdSs = MakeEdit(hwnd, inst, 102, 498, 32, ID_HOLD_SS);
+    MakeLabel(hwnd, inst, L":", 136, 500, 8, 16);
+    g_holdMs = MakeEdit(hwnd, inst, 144, 498, 36, ID_HOLD_MS);
 
-    MakeGroup(hwnd, inst, L"target", 6, 488, 192, 112);
+    MakeGroup(hwnd, inst, L"target", 6, 542, 192, 112);
     g_fixed = CreateWindowExW(0, L"BUTTON", L"Fixed spot",
                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX,
-                              16, 506, 160, 18, hwnd, MenuId(ID_FIXED), inst, nullptr);
+                              16, 560, 160, 18, hwnd, MenuId(ID_FIXED), inst, nullptr);
     g_pick = CreateWindowExW(0, L"BUTTON", L"Choose spot", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                             28, 526, 156, 20, hwnd, MenuId(ID_PICK), inst, nullptr);
+                             28, 580, 156, 20, hwnd, MenuId(ID_PICK), inst, nullptr);
     g_lock = CreateWindowExW(0, L"BUTTON", L"One window",
                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                             16, 552, 160, 18, hwnd, MenuId(ID_LOCK), inst, nullptr);
+                             16, 606, 160, 18, hwnd, MenuId(ID_LOCK), inst, nullptr);
     g_lockPick = CreateWindowExW(0, L"BUTTON", L"Choose window", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                 28, 572, 156, 20, hwnd, MenuId(ID_LOCK_PICK), inst, nullptr);
+                                 28, 626, 156, 20, hwnd, MenuId(ID_LOCK_PICK), inst, nullptr);
 
-    g_warn = MakeLabel(hwnd, inst, L"", 8, 606, 188, 28, ID_WARN);
+    g_warn = MakeLabel(hwnd, inst, L"", 8, 662, 188, 28, ID_WARN);
     EnumChildWindows(hwnd, SubclassInputChild, 0);
 }
 
@@ -1096,7 +1153,7 @@ int RunWindow(HINSTANCE inst) {
     wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     RegisterClassW(&wc);
 
-    RECT rect{0, 0, 204, 640};
+    RECT rect{0, 0, 204, 698};
     AdjustWindowRect(&rect, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
     HWND hwnd = CreateWindowExW(
         0, L"ClickerWindow", L"Clicker",

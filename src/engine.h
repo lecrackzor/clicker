@@ -7,7 +7,7 @@
 #include <cstdint>
 
 enum class ActionKind { Mouse, Key };
-enum class ClickType { Single, Double, Hold };
+enum class ClickType { Single, Double, Hold, TimedHold };
 enum class RepeatMode { UntilStopped, Count };
 enum class HotkeyMode { Toggle, Hold };
 
@@ -20,6 +20,7 @@ struct Config {
     int repeatCount = 10;
     int64_t intervalMs = 100;
     int holdMs = 20;
+    int64_t timedHoldMs = 1000;
     HotkeyMode hotkeyMode = HotkeyMode::Toggle;
     WORD hotkeyVk = VK_F6;
     WORD panicVk = VK_F12;
