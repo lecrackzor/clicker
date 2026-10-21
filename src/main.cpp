@@ -535,8 +535,7 @@ void LoadIni() {
     int seconds = GetPrivateProfileIntW(L"clicker", L"seconds", 0, g_ini.c_str());
     int millis = GetPrivateProfileIntW(L"clicker", L"millis", 100, g_ini.c_str());
     cfg.intervalMs = IntervalMsFromParts(hours, minutes, seconds, millis);
-    cfg.holdMs = GetPrivateProfileIntW(L"clicker", L"hold_ms", 20, g_ini.c_str());
-    if (cfg.holdMs < 1) cfg.holdMs = 1;
+    cfg.holdMs = 20;
     wchar_t holdProbe[8] = {};
     DWORD holdProbeLen = GetPrivateProfileStringW(L"clicker", L"hold_for_millis", L"", holdProbe, 8, g_ini.c_str());
     if (holdProbeLen == 0) {
