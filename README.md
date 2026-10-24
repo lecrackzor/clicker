@@ -5,7 +5,7 @@ A small Windows auto-clicker. The idea comes from [Boris Mezhibovskiy](#what-cha
 Use it on your own machine, at your own risk.
 
 <p align="center">
-  <img src="docs/clicker.png" alt="Clicker window" width="220">
+  <img src="docs/clicker.png" alt="Normal click beside script mode" width="735">
 </p>
 
 ## What changed from Boris's program

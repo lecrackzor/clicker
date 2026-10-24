@@ -147,6 +147,12 @@ HWND g_holdHh = nullptr;
 HWND g_holdMm = nullptr;
 HWND g_holdSs = nullptr;
 HWND g_holdMs = nullptr;
+HWND g_holdSep1 = nullptr;
+HWND g_holdSep2 = nullptr;
+HWND g_holdSep3 = nullptr;
+HWND g_mouseGroup = nullptr;
+HWND g_repeatLabel = nullptr;
+HWND g_repeatHint = nullptr;
 HWND g_repeatN = nullptr;
 HWND g_hh = nullptr;
 HWND g_mm = nullptr;
@@ -294,7 +300,7 @@ void WorkerMain() {
             cfg = g_cfg;
             script = g_script;
         }
-        if (ActionConflictsWithHotkeys(cfg)) {
+        if (cfg.clickType != ClickType::Script && ActionConflictsWithHotkeys(cfg)) {
             PostState(4, 0, 0);
             continue;
         }
@@ -885,6 +891,31 @@ void UpdateInputMode(bool editable) {
     EnableWindow(g_setKey, editable && key ? TRUE : FALSE);
 }
 
+void ApplyUnusedControls(bool editable) {
+    bool script = g_typeScript && SendMessageW(g_typeScript, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    const BOOL on = (editable && !script) ? TRUE : FALSE;
+    EnableWindow(g_mouseGroup, on);
+    EnableWindow(g_btnLeft, on);
+    EnableWindow(g_btnMiddle, on);
+    EnableWindow(g_btnRight, on);
+    EnableWindow(g_keyMode, on);
+    EnableWindow(g_repeatLabel, on);
+    EnableWindow(g_repeatHint, on);
+    EnableWindow(g_repeatN, on);
+    EnableWindow(g_holdHh, on);
+    EnableWindow(g_holdMm, on);
+    EnableWindow(g_holdSs, on);
+    EnableWindow(g_holdMs, on);
+    EnableWindow(g_holdSep1, on);
+    EnableWindow(g_holdSep2, on);
+    EnableWindow(g_holdSep3, on);
+    if (on) {
+        UpdateInputMode(true);
+    } else {
+        EnableWindow(g_setKey, FALSE);
+    }
+}
+
 void UpdateHotkeyButtons() {
     wchar_t name[64];
     KeyName(g_cfg.hotkeyVk, name, 64);
@@ -1365,7 +1396,7 @@ void ApplyUi(const Config& cfg) {
     UpdateHotkeyButtons();
     UpdatePositionLabel();
     UpdateWarning(cfg);
-    UpdateInputMode(true);
+    ApplyUnusedControls(true);
     LayoutForScript(cfg.clickType == ClickType::Script);
     g_loading = false;
     PaintScript();
@@ -1525,11 +1556,7 @@ void SetRunningUi(bool running) {
     EnableWindow(g_start, running ? FALSE : TRUE);
     EnableWindow(g_stop, running ? TRUE : FALSE);
     const BOOL edit = running ? FALSE : TRUE;
-    EnableWindow(g_btnLeft, edit);
-    EnableWindow(g_btnMiddle, edit);
-    EnableWindow(g_btnRight, edit);
-    EnableWindow(g_keyMode, edit);
-    UpdateInputMode(edit == TRUE);
+    ApplyUnusedControls(edit == TRUE);
     EnableWindow(g_typeSingle, edit);
     EnableWindow(g_typeDouble, edit);
     EnableWindow(g_typeHold, edit);
@@ -1546,11 +1573,6 @@ void SetRunningUi(bool running) {
     EnableWindow(g_scriptSave, (edit && scriptOn) ? TRUE : FALSE);
     EnableWindow(g_scriptDel, (edit && scriptOn) ? TRUE : FALSE);
     EnableWindow(g_scriptKey, (edit && scriptOn) ? TRUE : FALSE);
-    EnableWindow(g_holdHh, edit);
-    EnableWindow(g_holdMm, edit);
-    EnableWindow(g_holdSs, edit);
-    EnableWindow(g_holdMs, edit);
-    EnableWindow(g_repeatN, edit);
     EnableWindow(g_hh, edit);
     EnableWindow(g_mm, edit);
     EnableWindow(g_ss, edit);
@@ -2394,10 +2416,12 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
     g_ms = MakeEdit(hwnd, inst, 140, 52, 36, ID_MS);
     AddTip(g_ms, L"Milliseconds between clicks.");
 
-    AddTip(MakeLabel(hwnd, inst, L"stop after", 8, 86, 62, 16), repeatTip);
+    g_repeatLabel = MakeLabel(hwnd, inst, L"stop after", 8, 86, 62, 16);
+    AddTip(g_repeatLabel, repeatTip);
     g_repeatN = MakeEdit(hwnd, inst, 72, 84, 40, ID_REPEAT_N);
     AddTip(g_repeatN, repeatTip);
-    AddTip(MakeLabel(hwnd, inst, L"0 = no limit", 118, 86, 76, 16), repeatTip);
+    g_repeatHint = MakeLabel(hwnd, inst, L"0 = no limit", 118, 86, 76, 16);
+    AddTip(g_repeatHint, repeatTip);
     SendMessageW(g_repeatN, EM_SETLIMITTEXT, 7, 0);
 
     g_start = CreateWindowExW(0, L"BUTTON", L"Start", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
@@ -2423,7 +2447,8 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
                                  70, 248, 116, 20, hwnd, MenuId(ID_PANIC), inst, nullptr);
     AddTip(g_panicBtn, panicTip);
 
-    AddTip(MakeGroup(hwnd, inst, L"mouse / key", 6, 280, 192, 118), L"What gets pressed.");
+    g_mouseGroup = MakeGroup(hwnd, inst, L"mouse / key", 6, 280, 192, 118);
+    AddTip(g_mouseGroup, L"What gets pressed.");
     g_btnLeft = MakeRadio(hwnd, inst, L"left", 18, 298, 168, ID_BTN_LEFT, true);
     AddTip(g_btnLeft, L"Click the left mouse button.");
     g_btnMiddle = MakeRadio(hwnd, inst, L"middle", 18, 316, 168, ID_BTN_MIDDLE, false);
@@ -2448,13 +2473,13 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
     AddTip(g_typeTimed, L"Hold the button down for the time below, then let go.");
     g_holdHh = MakeEdit(hwnd, inst, 18, 498, 32, ID_HOLD_HH);
     AddTip(g_holdHh, holdTip);
-    MakeLabel(hwnd, inst, L":", 52, 500, 8, 16);
+    g_holdSep1 = MakeLabel(hwnd, inst, L":", 52, 500, 8, 16);
     g_holdMm = MakeEdit(hwnd, inst, 60, 498, 32, ID_HOLD_MM);
     AddTip(g_holdMm, holdTip);
-    MakeLabel(hwnd, inst, L":", 94, 500, 8, 16);
+    g_holdSep2 = MakeLabel(hwnd, inst, L":", 94, 500, 8, 16);
     g_holdSs = MakeEdit(hwnd, inst, 102, 498, 32, ID_HOLD_SS);
     AddTip(g_holdSs, holdTip);
-    MakeLabel(hwnd, inst, L":", 136, 500, 8, 16);
+    g_holdSep3 = MakeLabel(hwnd, inst, L":", 136, 500, 8, 16);
     g_holdMs = MakeEdit(hwnd, inst, 144, 498, 36, ID_HOLD_MS);
     AddTip(g_holdMs, holdTip);
     g_typeScript = MakeRadio(hwnd, inst, L"script", 18, 522, 168, ID_TYPE_SCRIPT, false);
@@ -2521,7 +2546,7 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
 
 void OnStart() {
     CommitFromUi();
-    if (ActionConflictsWithHotkeys(g_cfg)) {
+    if (g_cfg.clickType != ClickType::Script && ActionConflictsWithHotkeys(g_cfg)) {
         SetWindowTextW(g_status, L"Action key matches the hotkey or panic key");
         return;
     }
@@ -2720,7 +2745,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             CommitFromUi();
             if (id == ID_TYPE_SINGLE || id == ID_TYPE_DOUBLE || id == ID_TYPE_HOLD || id == ID_TYPE_TIMED ||
                 id == ID_TYPE_SCRIPT) {
-                LayoutForScript(SendMessageW(g_typeScript, BM_GETCHECK, 0, 0) == BST_CHECKED);
+                bool script = SendMessageW(g_typeScript, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                LayoutForScript(script);
+                ApplyUnusedControls(true);
             }
         }
         return 0;
