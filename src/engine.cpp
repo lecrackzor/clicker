@@ -119,6 +119,7 @@ void SendMouse(int button, bool down) {
         in.mi.dwFlags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
         break;
     }
+    in.mi.dwExtraInfo = kInjectedExtra;
     SendInput(1, &in, sizeof(INPUT));
 }
 
@@ -235,6 +236,30 @@ int ClicksPerBurst(const Config& cfg) {
 
 }  // namespace
 
+void EngineInject(const Config& cfg, bool down, const RunControl& ctl) {
+    Inject(cfg, down, ctl.inject, ctl);
+}
+
+int EngineWaitMs(double ms, const RunControl& ctl) {
+    if (g_freq <= 0) {
+        EngineInit();
+    }
+    if (ms < 0) {
+        ms = 0;
+    }
+    HANDLE timer = CreateHiResTimer();
+    int64_t ticks = static_cast<int64_t>((ms * static_cast<double>(g_freq)) / 1000.0);
+    int code = WaitUntil(timer, QpcNow() + ticks, ctl);
+    if (timer) {
+        CloseHandle(timer);
+    }
+    return code;
+}
+
+bool EngineInputAllowed(const Config& cfg) {
+    return InputAllowed(cfg);
+}
+
 void EngineInit() {
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
@@ -276,7 +301,8 @@ void SplitInterval(int64_t intervalMs, int& hours, int& minutes, int& seconds, i
 
 int64_t EffectivePeriodMs(const Config& cfg) {
     int64_t hold = cfg.holdMs < 1 ? 1 : cfg.holdMs;
-    if (cfg.clickType == ClickType::Hold || cfg.clickType == ClickType::TimedHold) {
+    if (cfg.clickType == ClickType::Hold || cfg.clickType == ClickType::TimedHold ||
+        cfg.clickType == ClickType::Script) {
         return hold;
     }
     int clicks = ClicksPerBurst(cfg);
@@ -343,9 +369,15 @@ RunStats RunSession(const Config& cfg, const RunControl& ctl) {
     SetThreadPriority(thread, THREAD_PRIORITY_ABOVE_NORMAL);
     PeriodGuard period;
     HANDLE timer = CreateHiResTimer();
+    const int64_t sessionStart = QpcNow();
 
     auto finish = [&](StopReason reason) {
         stats.reason = reason;
+        double elapsed = QpcToMs(QpcNow() - sessionStart);
+        if (elapsed < 0) {
+            elapsed = 0;
+        }
+        stats.elapsedMs = static_cast<int64_t>(elapsed + 0.5);
         if (timer) {
             CloseHandle(timer);
         }
