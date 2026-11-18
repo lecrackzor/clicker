@@ -23,7 +23,7 @@ This version changes the following.
 - **Stop after N is still 0 for no limit.** Start and Stop sit next to the hotkeys. Hotkeys keep working while the window is minimized. Closing the program releases them.
 - **Optional target.** A fixed screen spot, or a lock to one window. With the lock on, clicks happen only while the pointer is over that window, and hold mode lets go when the pointer leaves.
 - **Settings stick.** They are saved in `%LOCALAPPDATA%\Clicker\settings.ini`.
-- **A script can run the sequence.** Script mode plays clicks, keys, waits, holds, and repeats. A time needs a unit, such as `5s`, `500ms`, or `0:0:5:0`. Saved scripts can be loaded with their own key.
+- **A script can run the sequence.** Script mode plays clicks, keys, waits, holds, and repeats. A time needs a unit, such as `5s`, `500ms`, or `0:0:5:0`. A click can name a screen spot: `lef 100,200`, `lef 100,200 5s`, or `lef+ 100,200`. Get coords writes `lef X,Y` for the spot you click. Saved scripts can be loaded with their own key.
 - **The status line reports the run.** Idle, running (click count and clicks per second), holding, panic, or stopped. After a run it also shows how long that run lasted. Controls lock while a run is going.
 
 ## Build

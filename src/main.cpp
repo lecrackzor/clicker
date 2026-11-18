@@ -60,6 +60,7 @@ constexpr int ID_SCRIPT_LIST = 150;
 constexpr int ID_SCRIPT_SAVE = 151;
 constexpr int ID_SCRIPT_DEL = 152;
 constexpr int ID_SCRIPT_KEY = 153;
+constexpr int ID_GET_COORDS = 154;
 constexpr int ID_HOT_PRESS = 138;
 constexpr int ID_HOT_TOGGLE = 139;
 
@@ -69,6 +70,7 @@ constexpr UINT WM_CLICKER_LOAD = WM_APP + 3;
 constexpr UINT_PTR kPickTimer = 1;
 constexpr UINT_PTR kCaptureTimer = 2;
 constexpr UINT_PTR kLockTimer = 3;
+constexpr UINT_PTR kCoordTimer = 4;
 
 enum class CaptureTarget { None, Action, Hotkey, Panic, Script, ScriptKey };
 
@@ -142,6 +144,7 @@ HWND g_scriptDel = nullptr;
 HWND g_scriptKey = nullptr;
 HWND g_helpBtn = nullptr;
 HWND g_addKey = nullptr;
+HWND g_getCoords = nullptr;
 HWND g_helpWnd = nullptr;
 HWND g_holdHh = nullptr;
 HWND g_holdMm = nullptr;
@@ -182,6 +185,8 @@ bool g_pickActive = false;
 bool g_pickWaitRelease = false;
 bool g_lockPickActive = false;
 bool g_lockWaitRelease = false;
+bool g_coordActive = false;
+bool g_coordWaitRelease = false;
 
 void PostState(int state, unsigned long long clicks, double cps, int64_t elapsedMs = -1) {
     HWND hwnd = g_hwnd.load();
@@ -416,7 +421,14 @@ const wchar_t* kHelpText =
     L"Keys do too: a, 5, spc, enter, lshift, insert, num5.\r\n"
     L"5 is the top-row 5 key. num5 is the number pad.\r\n"
     L"Add key writes that name where the cursor was.\r\n"
+    L"Get coords writes lef X,Y for the spot you click.\r\n"
+    L"Edit lef to rig or mid to click another button there.\r\n"
     L"If you have not clicked in the script, it goes at the bottom.\r\n"
+    L"\r\n"
+    L"lef 100,200    click left at that screen spot\r\n"
+    L"lef 100,200 5s keep clicking there for 5 seconds\r\n"
+    L"lef+ 100,200   hold left there until lef- or stop\r\n"
+    L"rig 100,200    the same with the right button\r\n"
     L"\r\n"
     L"lshift a       Shift+A once\r\n"
     L"lshift 5       Shift+5 once\r\n"
@@ -1314,6 +1326,10 @@ void LayoutForScript(bool script) {
     if (!hwnd) {
         return;
     }
+    if (!script && g_coordActive) {
+        g_coordActive = false;
+        KillTimer(hwnd, kCoordTimer);
+    }
     const int width = script ? 430 : 204;
     const int height = 716;
     RECT rect{0, 0, width, height};
@@ -1337,6 +1353,10 @@ void LayoutForScript(bool script) {
     if (g_addKey) {
         ShowWindow(g_addKey, script ? SW_SHOW : SW_HIDE);
         EnableWindow(g_addKey, script ? TRUE : FALSE);
+    }
+    if (g_getCoords) {
+        ShowWindow(g_getCoords, script ? SW_SHOW : SW_HIDE);
+        EnableWindow(g_getCoords, script ? TRUE : FALSE);
     }
     if (g_scriptList) {
         ShowWindow(g_scriptList, script ? SW_SHOW : SW_HIDE);
@@ -1553,6 +1573,12 @@ HWND MakeEdit(HWND parent, HINSTANCE inst, int x, int y, int w, int id) {
 }
 
 void SetRunningUi(bool running) {
+    if (running && g_coordActive) {
+        g_coordActive = false;
+        if (HWND hwnd = g_hwnd.load()) {
+            KillTimer(hwnd, kCoordTimer);
+        }
+    }
     EnableWindow(g_start, running ? FALSE : TRUE);
     EnableWindow(g_stop, running ? TRUE : FALSE);
     const BOOL edit = running ? FALSE : TRUE;
@@ -1568,6 +1594,7 @@ void SetRunningUi(bool running) {
         SendMessageW(g_scriptEdit, EM_SETREADONLY, (running && scriptOn) ? TRUE : FALSE, 0);
     }
     EnableWindow(g_addKey, (edit && scriptOn) ? TRUE : FALSE);
+    EnableWindow(g_getCoords, (edit && scriptOn) ? TRUE : FALSE);
     EnableWindow(g_helpBtn, scriptOn ? TRUE : FALSE);
     EnableWindow(g_scriptList, (edit && scriptOn) ? TRUE : FALSE);
     EnableWindow(g_scriptSave, (edit && scriptOn) ? TRUE : FALSE);
@@ -2157,6 +2184,32 @@ void PollLock(HWND hwnd) {
     SetWindowTextW(g_status, L"Window locked");
 }
 
+void PollCoord(HWND hwnd) {
+    if (!g_coordActive) {
+        return;
+    }
+    bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    if (g_coordWaitRelease) {
+        if (!down) {
+            g_coordWaitRelease = false;
+        }
+        return;
+    }
+    if (!down) {
+        return;
+    }
+    POINT point;
+    GetCursorPos(&point);
+    g_coordActive = false;
+    KillTimer(hwnd, kCoordTimer);
+    wchar_t line[64];
+    swprintf_s(line, L"lef %d,%d", point.x, point.y);
+    InsertScriptLine(line);
+    wchar_t note[96];
+    swprintf_s(note, L"Added lef %d,%d", point.x, point.y);
+    SetWindowTextW(g_status, note);
+}
+
 BOOL CALLBACK SetChildFont(HWND child, LPARAM font) {
     SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(font), TRUE);
     return TRUE;
@@ -2525,11 +2578,14 @@ void CreateControls(HWND hwnd, HINSTANCE inst) {
                                   352, 64, 70, 22, hwnd, MenuId(ID_SCRIPT_KEY), inst, nullptr);
     AddTip(g_scriptKey, L"Loads this script while stopped. Click, then press a key. Escape clears it.");
     g_helpBtn = CreateWindowExW(0, L"BUTTON", L"Help", WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS,
-                                214, 90, 100, 22, hwnd, MenuId(ID_HELP), inst, nullptr);
+                                214, 90, 56, 22, hwnd, MenuId(ID_HELP), inst, nullptr);
     AddTip(g_helpBtn, L"Open a short guide to the script.");
     g_addKey = CreateWindowExW(0, L"BUTTON", L"Add key", WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS,
-                               318, 90, 104, 22, hwnd, MenuId(ID_ADD_KEY), inst, nullptr);
+                               274, 90, 70, 22, hwnd, MenuId(ID_ADD_KEY), inst, nullptr);
     AddTip(g_addKey, L"Press a key or mouse button and write its name where the cursor was. If you have not clicked in the script, it goes at the bottom.");
+    g_getCoords = CreateWindowExW(0, L"BUTTON", L"Get coords", WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS,
+                                  348, 90, 74, 22, hwnd, MenuId(ID_GET_COORDS), inst, nullptr);
+    AddTip(g_getCoords, L"Click a spot on the screen and write lef X,Y for it where the cursor was. Edit lef to rig or mid for another button.");
     LoadLibraryW(L"Msftedit.dll");
     g_scriptEdit = CreateWindowExW(
         WS_EX_CLIENTEDGE, L"RICHEDIT50W", L"",
@@ -2651,6 +2707,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (id == ID_PICK && code == BN_CLICKED) {
+            if (g_coordActive) {
+                g_coordActive = false;
+                KillTimer(hwnd, kCoordTimer);
+            }
             g_pickActive = true;
             g_pickWaitRelease = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
             SetWindowTextW(g_pick, L"...");
@@ -2667,6 +2727,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 BeginCapture(hwnd, CaptureTarget::Script);
                 SetWindowTextW(g_status, L"Press a key or mouse button");
             }
+            return 0;
+        }
+        if (id == ID_GET_COORDS && code == BN_CLICKED) {
+            if (g_capture != CaptureTarget::None) {
+                EndCapture(hwnd);
+            }
+            g_pickActive = false;
+            g_lockPickActive = false;
+            KillTimer(hwnd, kPickTimer);
+            KillTimer(hwnd, kLockTimer);
+            g_coordActive = true;
+            g_coordWaitRelease = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            SetWindowTextW(g_status, L"Click the spot to use");
+            SetTimer(hwnd, kCoordTimer, 10, nullptr);
             return 0;
         }
         if (id == ID_SCRIPT_SAVE && code == BN_CLICKED) {
@@ -2728,6 +2802,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (id == ID_LOCK_PICK && code == BN_CLICKED) {
+            if (g_coordActive) {
+                g_coordActive = false;
+                KillTimer(hwnd, kCoordTimer);
+            }
             g_lockPickActive = true;
             g_lockWaitRelease = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
             SetWindowTextW(g_lockPick, L"...");
@@ -2759,6 +2837,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             PollPick(hwnd);
         } else if (wParam == kLockTimer) {
             PollLock(hwnd);
+        } else if (wParam == kCoordTimer) {
+            PollCoord(hwnd);
         }
         return 0;
     case WM_MOUSEMOVE: {
@@ -2819,6 +2899,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int RunWindow(HINSTANCE inst) {
+    HANDLE instance = CreateMutexW(nullptr, TRUE, L"Local\\Clicker.SingleInstance");
+    if (!instance) {
+        return 1;
+    }
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(instance);
+        HWND existing = FindWindowW(L"ClickerWindow", nullptr);
+        if (existing) {
+            if (IsIconic(existing)) {
+                ShowWindow(existing, SW_RESTORE);
+            }
+            SetForegroundWindow(existing);
+        }
+        return 0;
+    }
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     EngineInit();
     SetProcessDPIAware();
@@ -2842,6 +2937,7 @@ int RunWindow(HINSTANCE inst) {
         nullptr, nullptr, inst, nullptr);
     if (!hwnd) {
         CoUninitialize();
+        CloseHandle(instance);
         return 1;
     }
     ShowWindow(hwnd, SW_SHOW);
@@ -2854,6 +2950,7 @@ int RunWindow(HINSTANCE inst) {
     }
     int code = static_cast<int>(message.wParam);
     CoUninitialize();
+    CloseHandle(instance);
     return code;
 }
 

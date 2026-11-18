@@ -13,6 +13,9 @@
 //   lef+             hold left down until lef- or stop
 //   lef+ 5s          hold left for 5 seconds, then release
 //   lef-             release left
+//   lef 100,200      click left at that screen spot
+//   lef 100,200 5s   keep clicking there for 5 seconds
+//   lef+ 100,200     hold left there until lef- or stop
 //   lshift a         Shift+A once. lshift a 5s keeps doing it for 5 seconds
 //   lshift 5         Shift+5 once. 5 is the top-row key, num5 is the number pad
 //   wait 5s          pause. 500ms, 2m, 1h, and 0:0:5:0 are times too
@@ -61,6 +64,9 @@ struct Cmd {
     std::vector<Config> mods;
     double seconds = 0;
     int times = 0;
+    bool hasPos = false;
+    int posX = 0;
+    int posY = 0;
     std::vector<Cmd> body;
 };
 
@@ -313,6 +319,33 @@ int ParseTime(const std::wstring& token, double& seconds) {
     return seconds >= 0 ? 1 : 0;
 }
 
+// "812,430" is a screen spot. A monitor left of or above the main one has
+// negative numbers, so a leading minus is part of the number, not a hold mark.
+bool ParseSpot(const std::wstring& token, int& x, int& y) {
+    size_t comma = token.find(L',');
+    if (comma == std::wstring::npos || comma == 0 || comma + 1 >= token.size()) {
+        return false;
+    }
+    if (token.find(L',', comma + 1) != std::wstring::npos) {
+        return false;
+    }
+    wchar_t* end = nullptr;
+    long px = wcstol(token.c_str(), &end, 10);
+    if (end != token.c_str() + static_cast<std::ptrdiff_t>(comma)) {
+        return false;
+    }
+    long py = wcstol(token.c_str() + comma + 1, &end, 10);
+    if (end == token.c_str() + comma + 1 || *end != 0) {
+        return false;
+    }
+    if (px < -100000 || px > 100000 || py < -100000 || py > 100000) {
+        return false;
+    }
+    x = static_cast<int>(px);
+    y = static_cast<int>(py);
+    return true;
+}
+
 const wchar_t* TimeMessage(const std::wstring& token) {
     if (token.find(L':') != std::wstring::npos) {
         return L"use a unit, like 90s or 1m, or all four fields, like 0:1:30:0";
@@ -420,8 +453,33 @@ bool ParseBlock(const std::vector<Line>& lines, size_t& index, int minIndent, in
             ++index;
             continue;
         }
+        bool hasSpot = false;
+        int spotX = 0;
+        int spotY = 0;
+        if (!words.empty()) {
+            int ax = 0;
+            int ay = 0;
+            if (ParseSpot(words.back(), ax, ay)) {
+                hasSpot = true;
+                spotX = ax;
+                spotY = ay;
+                words.pop_back();
+            }
+        }
+        if (hasSpot && !words.empty()) {
+            int ax = 0;
+            int ay = 0;
+            if (ParseSpot(words.back(), ax, ay)) {
+                if (!Reject(issues, error, errorChars, line.number, L"one spot per line")) {
+                    return false;
+                }
+                ++index;
+                continue;
+            }
+        }
         if (words.empty()) {
-            if (!Reject(issues, error, errorChars, line.number, L"unknown button or key")) {
+            const wchar_t* msg = hasSpot ? L"a spot needs a button or key" : L"unknown button or key";
+            if (!Reject(issues, error, errorChars, line.number, msg)) {
                 return false;
             }
             ++index;
@@ -482,7 +540,11 @@ bool ParseBlock(const std::vector<Line>& lines, size_t& index, int minIndent, in
             }
             if (name.empty() || !ButtonFromName(name, base, named.cfg)) {
                 const wchar_t* msg = L"unknown button or key";
-                if (!name.empty() && (name[0] == L'.' || (name[0] >= L'0' && name[0] <= L'9'))) {
+                int ax = 0;
+                int ay = 0;
+                if (!name.empty() && ParseSpot(name, ax, ay)) {
+                    msg = L"the spot goes after the button";
+                } else if (!name.empty() && (name[0] == L'.' || (name[0] >= L'0' && name[0] <= L'9'))) {
                     msg = TimeMessage(token);
                 }
                 if (!Reject(issues, error, errorChars, line.number, msg)) {
@@ -497,9 +559,28 @@ bool ParseBlock(const std::vector<Line>& lines, size_t& index, int minIndent, in
             ++index;
             continue;
         }
+        if (hasSpot) {
+            if (names.size() == 1 && names[0].mark == L'-') {
+                if (!Reject(issues, error, errorChars, line.number, L"a release does not take a spot")) {
+                    return false;
+                }
+                ++index;
+                continue;
+            }
+            if (names.back().cfg.action != ActionKind::Mouse) {
+                if (!Reject(issues, error, errorChars, line.number, L"a key does not take a spot")) {
+                    return false;
+                }
+                ++index;
+                continue;
+            }
+        }
         Cmd cmd;
         cmd.line = line.number;
         cmd.seconds = hasTime ? seconds : 0;
+        cmd.hasPos = hasSpot;
+        cmd.posX = spotX;
+        cmd.posY = spotY;
         if (names.size() > 1) {
             bool marked = false;
             for (const Named& named : names) {
@@ -705,6 +786,19 @@ int Pulse(const Config& button, std::vector<Held>& held, unsigned long long& cli
     return code;
 }
 
+// A line with a spot puts the cursor there for the press. That wins over the
+// fixed spot at the top, so one script can click several places.
+Config AtSpot(const Config& button, const Cmd& cmd) {
+    if (!cmd.hasPos) {
+        return button;
+    }
+    Config placed = button;
+    placed.fixedPos = true;
+    placed.fixedX = cmd.posX;
+    placed.fixedY = cmd.posY;
+    return placed;
+}
+
 int Exec(const std::vector<Cmd>& cmds, std::vector<Held>& held, unsigned long long& clicks,
          int64_t start, const RunControl& ctl, Live& live, int loopLeft) {
     for (const Cmd& cmd : cmds) {
@@ -713,6 +807,7 @@ int Exec(const std::vector<Cmd>& cmds, std::vector<Held>& held, unsigned long lo
             return code;
         }
         if (cmd.op == Op::Click) {
+            const Config button = AtSpot(cmd.button, cmd);
             int pressed = PressMods(cmd.mods, held, ctl);
             if (pressed != 0) {
                 return pressed;
@@ -720,10 +815,10 @@ int Exec(const std::vector<Cmd>& cmds, std::vector<Held>& held, unsigned long lo
             int result = 0;
             if (cmd.seconds <= 0) {
                 Note(ctl, live, cmd.line, -1, loopLeft, clicks);
-                result = Pulse(cmd.button, held, clicks, start, ctl);
+                result = Pulse(button, held, clicks, start, ctl);
             } else {
-                int hold = cmd.button.holdMs < 1 ? 1 : cmd.button.holdMs;
-                int64_t period = cmd.button.intervalMs;
+                int hold = button.holdMs < 1 ? 1 : button.holdMs;
+                int64_t period = button.intervalMs;
                 if (period < static_cast<int64_t>(hold) + 1) {
                     period = static_cast<int64_t>(hold) + 1;
                 }
@@ -733,7 +828,7 @@ int Exec(const std::vector<Cmd>& cmds, std::vector<Held>& held, unsigned long lo
                 while (QpcToMs(QpcNow() - began) < limit) {
                     double remain = (limit - QpcToMs(QpcNow() - began)) / 1000.0;
                     Note(ctl, live, cmd.line, remain, loopLeft, clicks);
-                    result = Pulse(cmd.button, held, clicks, start, ctl);
+                    result = Pulse(button, held, clicks, start, ctl);
                     if (result != 0) {
                         break;
                     }
@@ -756,21 +851,22 @@ int Exec(const std::vector<Cmd>& cmds, std::vector<Held>& held, unsigned long lo
                 return result;
             }
         } else if (cmd.op == Op::Down) {
-            int ready = WaitAllowed(cmd.button, ctl);
+            const Config button = AtSpot(cmd.button, cmd);
+            int ready = WaitAllowed(button, ctl);
             if (ready != 0) {
                 return ready;
             }
             Note(ctl, live, cmd.line, cmd.seconds > 0 ? cmd.seconds : -1, loopLeft, clicks);
-            EngineInject(cmd.button, true, ctl);
+            EngineInject(button, true, ctl);
             Held item;
-            item.cfg = cmd.button;
+            item.cfg = button;
             held.push_back(item);
             ++clicks;
             Report(ctl, clicks, start);
             if (cmd.seconds > 0) {
                 int waited = WaitNoted(cmd.seconds * 1000.0, cmd.line, loopLeft, clicks, ctl, live);
-                EngineInject(cmd.button, false, ctl);
-                Forget(held, cmd.button);
+                EngineInject(button, false, ctl);
+                Forget(held, button);
                 if (waited != 0) {
                     return waited;
                 }
